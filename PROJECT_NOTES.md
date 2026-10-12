@@ -160,7 +160,11 @@ Sai tên đăng nhập hoặc mật khẩu thì trả `401` với message `"Sai 
 Quy tắc:
 - Mỗi user chỉ xem, sửa và xoá được kỉ niệm của mình. Truy cập kỉ niệm của người khác thì trả `404`.
 - Upload chỉ nhận JPG, PNG, GIF, WEBP, tối đa **15MB** (vượt thì trả `413`).
-- Ảnh được lưu với tên UUID. Chạy ở máy thì lưu trong thư mục `./uploads` (`STORAGE_TYPE=local`), deploy thì lưu trên **Cloudflare R2** (`STORAGE_TYPE=r2`, bucket private). Ảnh luôn đi qua BE nên muốn xem vẫn phải đăng nhập và là chủ ảnh.
+- Ảnh được lưu với tên UUID. Nơi lưu chọn bằng `STORAGE_TYPE`:
+  - `local`: thư mục `./uploads`.
+  - `db`: bảng `memory_images` trong Neon. **Dùng khi deploy**, vì ổ đĩa Render free bị xoá mỗi lần khởi động lại.
+  - `r2`: Cloudflare R2, để dành khi DB sắp đầy.
+- Ảnh luôn đi qua BE nên muốn xem vẫn phải đăng nhập và là chủ ảnh.
 - `title` tối đa 120 ký tự, `description` tối đa 2000 ký tự.
 - **Phân loại** (`category`): gửi **tên** phân loại, tối đa 50 ký tự. BE tìm phân loại cùng tên của user (không phân biệt hoa thường), chưa có thì tự tạo. Để trống hoặc `null` = chưa phân loại. Phân loại không còn ảnh nào (sau khi xoá ảnh hoặc đổi phân loại) thì BE tự xoá, nên không cần API riêng cho phân loại.
 
@@ -171,6 +175,7 @@ Quy tắc:
 | `users` | `id`, `username` (unique), `display_name`, `password` (BCrypt), `created_at` |
 | `memories` | `id`, `title`, `description`, `memory_date`, `file_name`, `content_type`, `user_id` (FK → users), `category_id` (FK → categories, có thể null), `created_at` |
 | `categories` | `id`, `name`, `user_id` (FK → users, `ON DELETE CASCADE`), `created_at`. Unique (`user_id`, `name`) |
+| `memory_images` | `file_key` (PK, trùng `memories.file_name`), `content_type`, `data` (`bytea`), `created_at`. Chỉ dùng khi `STORAGE_TYPE=db` |
 | `revoked_tokens` | `jti` (PK), `expires_at` |
 | `social_accounts` | `id`, `provider` (`GOOGLE`/`FACEBOOK`), `provider_user_id`, `user_id` (FK → users, `ON DELETE CASCADE`), `email`, `created_at`. Unique (`provider`, `provider_user_id`) |
 | `refresh_tokens` | `id`, `token_hash` (SHA-256, unique), `family_id` (1 phiên đăng nhập), `user_id` (FK → users, `ON DELETE CASCADE`), `expires_at`, `used_at`, `created_at` |
@@ -184,9 +189,9 @@ Quy tắc:
 | `server.port` | `${PORT:8081}` | Render tự đặt `PORT` |
 | `server.forward-headers-strategy` | `framework` | Đọc `X-Forwarded-*` khi đứng sau proxy |
 | `app.upload-dir` | `./uploads` | Thư mục lưu ảnh khi `STORAGE_TYPE=local` |
-| `app.storage.type` | `${STORAGE_TYPE:local}` | `local` (ổ đĩa) hoặc `r2` (Cloudflare R2) |
+| `app.storage.type` | `${STORAGE_TYPE:local}` | `local` (ổ đĩa), `db` (bảng `memory_images`) hoặc `r2` (Cloudflare R2) |
 | `app.storage.r2.*` | `${R2_ACCOUNT_ID}`, `${R2_ACCESS_KEY_ID}`, `${R2_SECRET_ACCESS_KEY}`, `${R2_BUCKET}` | Thông tin R2 |
-| `app.storage.migrate-local` | `${MIGRATE_LOCAL_UPLOADS:false}` | `true` = lúc khởi động đẩy ảnh trong `./uploads` lên R2 (file đã có thì bỏ qua) |
+| `app.storage.migrate-local` | `${MIGRATE_LOCAL_UPLOADS:false}` | `true` = lúc khởi động chuyển ảnh trong `./uploads` sang nơi lưu đang chọn (`db`/`r2`), ảnh đã có thì bỏ qua |
 | `app.jwt.secret` | `${JWT_SECRET}` | Khoá ký JWT (≥ 32 ký tự) |
 | `app.jwt.access-expiration-ms` | `900000` (15 phút) | Thời hạn access token |
 | `app.jwt.refresh-expiration-ms` | `604800000` (7 ngày) | Thời hạn refresh token |
@@ -208,13 +213,14 @@ src/main/java/com/memories/
 │   ├── AuthController.java         # register / login / google / facebook / providers / refresh / logout / me
 │   └── MemoryController.java       # CRUD kỉ niệm (kèm phân loại) + trả file ảnh
 ├── dto/                            # AuthDtos, MemoryResponse, ApiError
-├── entity/                         # User, Memory, Category, RevokedToken, RefreshToken, SocialAccount
+├── entity/                         # User, Memory, MemoryImage, Category, RevokedToken, RefreshToken, SocialAccount
 ├── repository/                     # Spring Data JPA repositories
 ├── storage/
 │   ├── ImageStorage.java           # Interface lưu ảnh
 │   ├── LocalImageStorage.java      # STORAGE_TYPE=local: thư mục ./uploads
+│   ├── DbImageStorage.java         # STORAGE_TYPE=db: bảng memory_images trong PostgreSQL
 │   ├── R2ImageStorage.java         # STORAGE_TYPE=r2: Cloudflare R2 (AWS S3 SDK)
-│   └── LocalToR2Migration.java     # MIGRATE_LOCAL_UPLOADS=true: đẩy ảnh cũ lên R2
+│   └── LocalUploadsMigration.java  # MIGRATE_LOCAL_UPLOADS=true: chuyển ảnh cũ trong ./uploads sang db/r2
 ├── security/
 │   ├── AuthCookies.java            # Tạo, đọc, xoá cookie access/refresh (HttpOnly)
 │   ├── JwtService.java             # Tạo và kiểm tra JWT
@@ -355,13 +361,13 @@ D:\My-Project-FE
 8. **Phân loại ảnh**: thêm bảng `categories` và cột `memories.category_id`. Khi thêm/sửa ảnh chọn phân loại có sẵn hoặc tạo mới. Trang album có thanh lọc theo phân loại.
 9. **Animation bầu trời sao**: thêm canvas sao lấp lánh, parallax theo chuột, sao băng, và chùm sao khi bấm chuột.
 10. **Theme sáng / tối**: chuyển màu sang biến CSS, thêm nút đổi theme có hiệu ứng vòng tròn lan ra, lưu lựa chọn trong `localStorage`.
-11. **Chuẩn bị deploy**: tách phần lưu ảnh thành `ImageStorage` (local / Cloudflare R2), thêm `Dockerfile` + `render.yaml` cho Render, Pages Function proxy `/api/*` cho Cloudflare Pages, `public/_headers` (cache asset, header bảo mật), viết `DEPLOY.md`.
+11. **Chuẩn bị deploy**: tách phần lưu ảnh thành `ImageStorage` (local / db / Cloudflare R2), khi deploy lưu ảnh trong Neon (bảng `memory_images`) để không tốn phí, thêm `Dockerfile` + `render.yaml` cho Render, Pages Function proxy `/api/*` cho Cloudflare Pages, `public/_headers` (cache asset, header bảo mật), viết `DEPLOY.md`.
 
 ## 5. Deploy
 Hướng dẫn từng bước nằm trong **`DEPLOY.md`** (có ở cả 2 repo). Tóm tắt:
 - **FE → Cloudflare Pages.** Build `npm run build`, output `dist`. Pages Function `functions/api/[[path]].js` chuyển `/api/*` sang BE (biến `BACKEND_URL`), nên trình duyệt chỉ thấy một domain và cookie `SameSite=Strict` vẫn chạy.
-- **BE → Render** bằng Docker (`Dockerfile`, `render.yaml`). Biến môi trường: `COOKIE_SECURE=true`, `STORAGE_TYPE=r2`, `CORS_ORIGINS=https://<project>.pages.dev,...`, `JWT_SECRET` ngẫu nhiên.
-- **DB → Neon**, **ảnh → Cloudflare R2.** Ảnh cũ trong `./uploads` được chuyển lên R2 bằng `MIGRATE_LOCAL_UPLOADS=true` (chạy 1 lần ở máy).
+- **BE → Render** bằng Docker (`Dockerfile`, `render.yaml`). Biến môi trường: `COOKIE_SECURE=true`, `STORAGE_TYPE=db`, `CORS_ORIGINS=https://<project>.pages.dev,...`, `JWT_SECRET` ngẫu nhiên.
+- **DB và ảnh → Neon** (`STORAGE_TYPE=db`). Ảnh cũ trong `./uploads` được chuyển vào DB bằng `MIGRATE_LOCAL_UPLOADS=true` (chạy 1 lần ở máy). Neon free 0,5GB, chứa khoảng 1.500–2.500 ảnh đã nén.
 - Việc còn phải làm:
   - Đổi mật khẩu Neon (mật khẩu hiện tại đã bị chia sẻ qua chat).
   - Thêm domain Pages vào Google và Facebook.

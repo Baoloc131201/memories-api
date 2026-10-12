@@ -19,16 +19,9 @@ services:
         value: "true"
       - key: CORS_ORIGINS
         sync: false
+      # Ảnh lưu trong Neon (ổ đĩa Render free bị xoá mỗi lần khởi động lại)
       - key: STORAGE_TYPE
-        value: r2
-      - key: R2_ACCOUNT_ID
-        sync: false
-      - key: R2_ACCESS_KEY_ID
-        sync: false
-      - key: R2_SECRET_ACCESS_KEY
-        sync: false
-      - key: R2_BUCKET
-        sync: false
+        value: db
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: FACEBOOK_APP_ID

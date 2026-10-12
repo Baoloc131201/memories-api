@@ -16,27 +16,27 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * Chạy một lần ở máy để đẩy ảnh cũ trong ./uploads lên R2:
- * STORAGE_TYPE=r2 + MIGRATE_LOCAL_UPLOADS=true. File đã có trên R2 thì bỏ qua.
+ * Chạy một lần ở máy để chuyển ảnh cũ trong ./uploads sang nơi lưu mới:
+ * STORAGE_TYPE=db (hoặc r2) + MIGRATE_LOCAL_UPLOADS=true. Ảnh đã có ở nơi lưu mới thì bỏ qua.
  */
 @Component
 @ConditionalOnProperty(name = "app.storage.migrate-local", havingValue = "true")
-public class LocalToR2Migration implements ApplicationRunner {
+public class LocalUploadsMigration implements ApplicationRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(LocalToR2Migration.class);
+    private static final Logger log = LoggerFactory.getLogger(LocalUploadsMigration.class);
 
     private final ImageStorage storage;
     private final Path dir;
 
-    public LocalToR2Migration(ImageStorage storage, @Value("${app.upload-dir}") String uploadDir) {
+    public LocalUploadsMigration(ImageStorage storage, @Value("${app.upload-dir}") String uploadDir) {
         this.storage = storage;
         this.dir = Path.of(uploadDir).toAbsolutePath().normalize();
     }
 
     @Override
     public void run(ApplicationArguments args) throws IOException {
-        if (!(storage instanceof R2ImageStorage r2)) {
-            log.warn("MIGRATE_LOCAL_UPLOADS chỉ dùng khi STORAGE_TYPE=r2, bỏ qua");
+        if (storage instanceof LocalImageStorage) {
+            log.warn("MIGRATE_LOCAL_UPLOADS chỉ dùng khi STORAGE_TYPE=db hoặc r2, bỏ qua");
             return;
         }
         if (!Files.isDirectory(dir)) {
@@ -50,13 +50,13 @@ public class LocalToR2Migration implements ApplicationRunner {
         int uploaded = 0;
         for (Path f : files) {
             String key = f.getFileName().toString();
-            if (r2.exists(key)) continue;
+            if (storage.exists(key)) continue;
             try (InputStream in = Files.newInputStream(f)) {
-                r2.save(key, in, Files.size(f), contentType(key));
+                storage.save(key, in, Files.size(f), contentType(key));
             }
             uploaded++;
         }
-        log.info("Đã chuyển {} / {} ảnh từ {} lên R2", uploaded, files.size(), dir);
+        log.info("Đã chuyển {} / {} ảnh từ {} sang nơi lưu mới", uploaded, files.size(), dir);
     }
 
     private static String contentType(String key) {

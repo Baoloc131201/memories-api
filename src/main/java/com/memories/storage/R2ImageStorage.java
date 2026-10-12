@@ -76,6 +76,7 @@ public class R2ImageStorage implements ImageStorage {
         s3.deleteObject(b -> b.bucket(bucket).key(key));
     }
 
+    @Override
     public boolean exists(String key) {
         try {
             s3.headObject(b -> b.bucket(bucket).key(key));

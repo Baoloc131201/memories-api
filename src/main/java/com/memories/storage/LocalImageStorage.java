@@ -39,4 +39,9 @@ public class LocalImageStorage implements ImageStorage {
     public void delete(String key) throws IOException {
         Files.deleteIfExists(dir.resolve(key));
     }
+
+    @Override
+    public boolean exists(String key) {
+        return Files.exists(dir.resolve(key));
+    }
 }
