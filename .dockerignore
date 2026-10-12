@@ -1,0 +1,6 @@
+target/
+uploads/
+data/
+.env
+.idea/
+*.iml
