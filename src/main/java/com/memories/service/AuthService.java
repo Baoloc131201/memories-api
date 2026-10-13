@@ -20,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.SecureRandom;
 import java.text.Normalizer;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -46,22 +47,31 @@ public class AuthService {
 
     public AuthResult register(RegisterRequest req) {
         String username = req.username().trim().toLowerCase();
+        String email = normalizeEmail(req.email());
         if (users.existsByUsername(username)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Tên đăng nhập đã tồn tại");
         }
+        if (users.existsByEmail(email)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email đã được sử dụng");
+        }
         User user = new User();
         user.setUsername(username);
+        user.setEmail(email);
         user.setDisplayName(req.displayName().trim());
         user.setPassword(passwordEncoder.encode(req.password()));
         users.save(user);
         return startSession(user);
     }
 
+    /** Đăng nhập bằng tên đăng nhập hoặc email (username không được chứa @ nên không bị nhầm). */
     public AuthResult login(LoginRequest req) {
-        User user = users.findByUsername(req.username().trim().toLowerCase())
+        String identifier = req.username().trim();
+        User user = (identifier.contains("@")
+                ? users.findByEmail(normalizeEmail(identifier))
+                : users.findByUsername(identifier.toLowerCase()))
                 .filter(u -> passwordEncoder.matches(req.password(), u.getPassword()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED,
-                        "Sai tên đăng nhập hoặc mật khẩu"));
+                        "Sai tên đăng nhập/email hoặc mật khẩu"));
         return startSession(user);
     }
 
@@ -84,6 +94,11 @@ public class AuthService {
         user.setDisplayName(name.length() > 100 ? name.substring(0, 100) : name);
         // Mật khẩu ngẫu nhiên không ai biết: user này chỉ đăng nhập được qua Google/Facebook
         user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
+        // Lưu email (đã được Google/Facebook xác minh) để user này dùng được "Quên mật khẩu" và đăng nhập bằng email.
+        // Email đã thuộc user khác thì bỏ qua, không gộp tài khoản.
+        if (profile.email() != null && !users.existsByEmail(normalizeEmail(profile.email()))) {
+            user.setEmail(normalizeEmail(profile.email()));
+        }
         users.save(user);
         socialAccounts.save(new SocialAccount(profile.provider(), profile.id(), user, profile.email()));
         return user;
@@ -130,6 +145,10 @@ public class AuthService {
 
     private AuthResult startSession(User user) {
         return new AuthResult(jwtService.generate(user.getUsername()), refreshTokens.issue(user), toResponse(user));
+    }
+
+    private static String normalizeEmail(String email) {
+        return email.trim().toLowerCase(Locale.ROOT);
     }
 
     public static UserResponse toResponse(User u) {

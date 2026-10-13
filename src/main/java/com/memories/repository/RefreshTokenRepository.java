@@ -1,6 +1,7 @@
 package com.memories.repository;
 
 import com.memories.entity.RefreshToken;
+import com.memories.entity.User;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -23,6 +24,10 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Modifying
     @Query("delete from RefreshToken t where t.familyId = :familyId")
     int deleteFamily(String familyId);
+
+    @Modifying
+    @Query("delete from RefreshToken t where t.user = :user")
+    int deleteByUser(User user);
 
     @Modifying
     @Transactional

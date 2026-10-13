@@ -3,18 +3,13 @@ package com.memories.service;
 import com.memories.entity.RefreshToken;
 import com.memories.entity.User;
 import com.memories.repository.RefreshTokenRepository;
+import com.memories.security.Tokens;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Base64;
-import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -26,7 +21,6 @@ public class RefreshTokenService {
 
     private final RefreshTokenRepository tokens;
     private final Duration ttl;
-    private final SecureRandom random = new SecureRandom();
 
     public RefreshTokenService(RefreshTokenRepository tokens,
                                @Value("${app.jwt.refresh-expiration-ms}") long ttlMs) {
@@ -44,7 +38,7 @@ public class RefreshTokenService {
     @Transactional
     public Optional<Rotated> rotate(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) return Optional.empty();
-        Optional<RefreshToken> found = tokens.findByTokenHash(hash(rawToken));
+        Optional<RefreshToken> found = tokens.findByTokenHash(Tokens.sha256(rawToken));
         if (found.isEmpty()) return Optional.empty();
 
         RefreshToken t = found.get();
@@ -66,7 +60,13 @@ public class RefreshTokenService {
     @Transactional
     public void revoke(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) return;
-        tokens.findByTokenHash(hash(rawToken)).ifPresent(t -> tokens.deleteFamily(t.getFamilyId()));
+        tokens.findByTokenHash(Tokens.sha256(rawToken)).ifPresent(t -> tokens.deleteFamily(t.getFamilyId()));
+    }
+
+    /** Thu hồi mọi phiên đăng nhập của user (dùng khi đặt lại mật khẩu). */
+    @Transactional
+    public void revokeAll(User user) {
+        tokens.deleteByUser(user);
     }
 
     public void purgeExpired() {
@@ -74,20 +74,9 @@ public class RefreshTokenService {
     }
 
     private String create(User user, String familyId) {
-        byte[] bytes = new byte[32];
-        random.nextBytes(bytes);
-        String raw = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-        tokens.save(new RefreshToken(hash(raw), familyId, user, Instant.now().plus(ttl)));
+        String raw = Tokens.random();
+        tokens.save(new RefreshToken(Tokens.sha256(raw), familyId, user, Instant.now().plus(ttl)));
         return raw;
-    }
-
-    private static String hash(String raw) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
     }
 
     public record Rotated(User user, String refreshToken) {}

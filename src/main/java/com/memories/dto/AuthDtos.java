@@ -1,5 +1,6 @@
 package com.memories.dto;
 
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -11,10 +12,18 @@ public final class AuthDtos {
             @NotBlank @Size(min = 3, max = 50)
             @Pattern(regexp = "^[a-zA-Z0-9_.]+$", message = "chỉ gồm chữ, số, dấu _ và .")
             String username,
+            @NotBlank @Email(message = "không hợp lệ") @Size(max = 254) String email,
             @NotBlank @Size(max = 100) String displayName,
             @NotBlank @Size(min = 6, max = 100) String password) {}
 
+    /** `username` nhận cả tên đăng nhập lẫn email. */
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}
+
+    public record ForgotPasswordRequest(@NotBlank @Email(message = "không hợp lệ") String email) {}
+
+    public record ResetTokenRequest(@NotBlank String token) {}
+
+    public record ResetPasswordRequest(@NotBlank String token, @NotBlank @Size(min = 6, max = 100) String password) {}
 
     public record GoogleLoginRequest(@NotBlank String credential) {}
 

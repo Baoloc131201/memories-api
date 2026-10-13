@@ -37,7 +37,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/refresh",
                                 "/api/auth/google", "/api/auth/facebook", "/api/auth/providers",
-                                "/api/auth/logout", "/error").permitAll()
+                                "/api/auth/logout", "/api/auth/forgot-password", "/api/auth/reset-password",
+                                "/api/auth/reset-password/validate", "/error").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)

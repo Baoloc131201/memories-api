@@ -28,3 +28,10 @@ services:
         sync: false
       - key: FACEBOOK_APP_SECRET
         sync: false
+      # Quên mật khẩu: link trong email trỏ về APP_URL, gửi mail qua Brevo (Render free chặn SMTP)
+      - key: APP_URL
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false

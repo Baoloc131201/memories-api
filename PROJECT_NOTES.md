@@ -22,6 +22,13 @@ Website lưu ảnh kỉ niệm, có đăng ký / đăng nhập / đăng xuất. 
    GOOGLE_CLIENT_ID=
    FACEBOOK_APP_ID=
    FACEBOOK_APP_SECRET=
+   # Quên mật khẩu (xem mục 1.2). Để trống thì nội dung email chỉ in ra log BE
+   APP_URL=http://localhost:5173
+   MAIL_FROM=
+   BREVO_API_KEY=
+   MAIL_HOST=
+   MAIL_USERNAME=
+   MAIL_PASSWORD=
    ```
 2. Chạy:
    ```bash
@@ -66,6 +73,18 @@ App mới tạo ở chế độ **Development**. Ở chế độ này **chỉ t�
 Khi web còn chạy ở localhost, có thể tạo trang Privacy Policy tạm bằng Google Sites, GitHub Pages hoặc trang tạo privacy policy miễn phí. Khi deploy lên domain thật thì đổi sang trang của web.
 
 Sau khi sửa `.env` thì khởi động lại BE. FE tự hiện nút dựa theo `GET /api/auth/providers`.
+
+### 1.2 Cấu hình gửi email (quên mật khẩu)
+BE chọn cách gửi theo thứ tự: có `BREVO_API_KEY` thì dùng Brevo, có `MAIL_HOST` thì dùng SMTP, không có gì thì chỉ ghi nội dung email (kèm link) ra log để test.
+
+**Chạy ở máy – Gmail SMTP**
+1. Bật xác minh 2 bước cho Gmail, vào https://myaccount.google.com/apppasswords tạo **App Password** (16 ký tự).
+2. `.env`: `MAIL_HOST=smtp.gmail.com`, `MAIL_USERNAME=<gmail>`, `MAIL_PASSWORD=<app password>`. `MAIL_FROM` để trống thì dùng `MAIL_USERNAME`.
+
+**Deploy trên Render – Brevo** (Render free chặn cổng SMTP 25/465/587 nên Gmail SMTP không chạy được)
+1. Đăng ký https://www.brevo.com (free 300 email/ngày) → **Senders, Domains & Dedicated IPs → Senders → Add a sender**, nhập gmail của bạn và bấm link xác minh trong mail.
+2. **SMTP & API → API Keys → Generate a new API key**.
+3. Trên Render đặt `BREVO_API_KEY=<key>`, `MAIL_FROM=<gmail đã xác minh>`, `APP_URL=https://<project>.pages.dev`.
 
 ### Frontend
 ```bash
@@ -118,8 +137,11 @@ Lỗi luôn có dạng `{ "status": <số>, "message": "<mô tả>" }`.
 
 | Method | Path | Cần đăng nhập | Request | Response |
 |---|---|---|---|---|
-| POST | `/api/auth/register` | Không | JSON `{ username, displayName, password }` | `201` + `Set-Cookie` + `{ id, username, displayName }` |
-| POST | `/api/auth/login` | Không | JSON `{ username, password }` | `200` + `Set-Cookie` + `{ id, username, displayName }` |
+| POST | `/api/auth/register` | Không | JSON `{ username, email, displayName, password }` | `201` + `Set-Cookie` + `{ id, username, displayName }` |
+| POST | `/api/auth/login` | Không | JSON `{ username, password }`, `username` là tên đăng nhập **hoặc email** | `200` + `Set-Cookie` + `{ id, username, displayName }` |
+| POST | `/api/auth/forgot-password` | Không | JSON `{ email }` | `204` (luôn trả 204 dù email có tài khoản hay không) |
+| POST | `/api/auth/reset-password/validate` | Không | JSON `{ token }` | `204` nếu link còn dùng được, `400` nếu đã dùng hoặc hết hạn |
+| POST | `/api/auth/reset-password` | Không | JSON `{ token, password }` | `204`. Token sai, đã dùng hoặc hết hạn thì `400` |
 | POST | `/api/auth/google` | Không | JSON `{ credential }` (Google ID token) | `200` + `Set-Cookie` + `{ id, username, displayName }`. Token sai thì `401`, chưa cấu hình thì `404` |
 | POST | `/api/auth/facebook` | Không | JSON `{ accessToken }` (Facebook user access token) | Như trên |
 | GET | `/api/auth/providers` | Không | – | `200` + `{ googleClientId, facebookAppId }` (`null` nếu chưa cấu hình) |
@@ -129,10 +151,19 @@ Lỗi luôn có dạng `{ "status": <số>, "message": "<mô tả>" }`.
 
 Ràng buộc khi đăng ký:
 - `username`: 3–50 ký tự, chỉ gồm chữ, số, `_` và `.`. Server tự chuyển sang chữ thường và kiểm tra trùng (trùng thì trả `409`).
+- `email`: bắt buộc, đúng định dạng email, tối đa 254 ký tự. Lưu chữ thường, trùng thì trả `409` (`"Email đã được sử dụng"`). Chưa xác minh email lúc đăng ký.
 - `displayName`: bắt buộc, tối đa 100 ký tự.
 - `password`: 6–100 ký tự, lưu bằng BCrypt.
 
-Sai tên đăng nhập hoặc mật khẩu thì trả `401` với message `"Sai tên đăng nhập hoặc mật khẩu"`.
+Đăng nhập: chuỗi có `@` thì tìm theo email, không thì tìm theo username. Sai thì trả `401` với message `"Sai tên đăng nhập/email hoặc mật khẩu"`.
+
+#### Quên mật khẩu
+1. FE gửi `POST /api/auth/forgot-password { email }`. Nếu email có tài khoản, BE tạo token ngẫu nhiên 32 byte (DB chỉ lưu SHA-256, bảng `password_reset_tokens`), sống **30 phút**, rồi gửi email chứa link `APP_URL/reset-password?token=...`. Link lấy từ cấu hình `APP_URL`, không lấy từ header request.
+2. Không báo email có tồn tại hay không, và gửi mail bất đồng bộ (`@Async`) để thời gian phản hồi như nhau.
+3. Mỗi user chỉ được gửi 1 email / 60 giây. Gửi link mới thì link cũ mất hiệu lực.
+4. Mở link thì FE gọi `reset-password/validate`, link đã dùng hoặc hết hạn thì báo ngay, không hiện form.
+5. `POST /api/auth/reset-password { token, password }`: đổi mật khẩu, xoá token (link hết hiệu lực), **thu hồi mọi refresh token** của user (đăng xuất mọi thiết bị; access token đang có vẫn sống tối đa 15 phút).
+6. Tài khoản Google/Facebook mới tạo được lưu email (nếu email chưa thuộc user khác) nên cũng dùng được quên mật khẩu để đặt mật khẩu và đăng nhập bằng email. Tài khoản cũ chưa có email thì chưa dùng được tính năng này.
 
 #### Kỉ niệm – `/api/memories` (tất cả đều cần đăng nhập)
 
@@ -172,12 +203,13 @@ Quy tắc:
 
 | Bảng | Cột chính |
 |---|---|
-| `users` | `id`, `username` (unique), `display_name`, `password` (BCrypt), `created_at` |
+| `users` | `id`, `username` (unique), `email` (unique, chữ thường, có thể null với tài khoản cũ), `display_name`, `password` (BCrypt), `created_at` |
 | `memories` | `id`, `title`, `description`, `memory_date`, `file_name`, `content_type`, `user_id` (FK → users), `category_id` (FK → categories, có thể null), `created_at` |
 | `categories` | `id`, `name`, `user_id` (FK → users, `ON DELETE CASCADE`), `created_at`. Unique (`user_id`, `name`) |
 | `memory_images` | `file_key` (PK, trùng `memories.file_name`), `content_type`, `data` (`bytea`), `created_at`. Chỉ dùng khi `STORAGE_TYPE=db` |
 | `revoked_tokens` | `jti` (PK), `expires_at` |
 | `social_accounts` | `id`, `provider` (`GOOGLE`/`FACEBOOK`), `provider_user_id`, `user_id` (FK → users, `ON DELETE CASCADE`), `email`, `created_at`. Unique (`provider`, `provider_user_id`) |
+| `password_reset_tokens` | `id`, `token_hash` (SHA-256, unique), `user_id` (FK → users, `ON DELETE CASCADE`), `expires_at`, `created_at` |
 | `refresh_tokens` | `id`, `token_hash` (SHA-256, unique), `family_id` (1 phiên đăng nhập), `user_id` (FK → users, `ON DELETE CASCADE`), `expires_at`, `used_at`, `created_at` |
 
 ### 2.4 Cấu hình (`src/main/resources/application.properties`)
@@ -198,6 +230,10 @@ Quy tắc:
 | `app.oauth.google.client-id` | `${GOOGLE_CLIENT_ID:}` | Client ID Google (trống = tắt) |
 | `app.oauth.facebook.app-id` | `${FACEBOOK_APP_ID:}` | App ID Facebook (trống = tắt) |
 | `app.oauth.facebook.app-secret` | `${FACEBOOK_APP_SECRET:}` | App secret Facebook |
+| `app.frontend-url` | `${APP_URL:http://localhost:5173}` | Địa chỉ FE, dùng tạo link đặt lại mật khẩu |
+| `app.mail.brevo-api-key` | `${BREVO_API_KEY:}` | API key Brevo (gửi mail qua HTTP) |
+| `app.mail.from` | `${MAIL_FROM:}` | Email người gửi (trống thì dùng `MAIL_USERNAME`) |
+| `spring.mail.*` | `${MAIL_HOST:}`, `${MAIL_PORT:587}`, `${MAIL_USERNAME:}`, `${MAIL_PASSWORD:}` | SMTP (STARTTLS) |
 | `app.jwt.cookie-secure` | `${COOKIE_SECURE:false}` | **Đặt `true` khi chạy HTTPS** |
 | `app.cors.allowed-origins` | `${CORS_ORIGINS:http://localhost:[*],http://127.0.0.1:[*]}` | Origin được phép (hỗ trợ wildcard cổng). Khi deploy thì đặt domain thật |
 
@@ -210,10 +246,10 @@ src/main/java/com/memories/
 │   ├── SecurityConfig.java         # Filter chain, stateless, CORS, BCrypt, UserDetailsService
 │   └── GlobalExceptionHandler.java # Trả lỗi dạng { status, message }
 ├── controller/
-│   ├── AuthController.java         # register / login / google / facebook / providers / refresh / logout / me
+│   ├── AuthController.java         # register / login / google / facebook / forgot-password / reset-password / providers / refresh / logout / me
 │   └── MemoryController.java       # CRUD kỉ niệm (kèm phân loại) + trả file ảnh
 ├── dto/                            # AuthDtos, MemoryResponse, ApiError
-├── entity/                         # User, Memory, MemoryImage, Category, RevokedToken, RefreshToken, SocialAccount
+├── entity/                         # User, Memory, MemoryImage, Category, RevokedToken, RefreshToken, SocialAccount, PasswordResetToken
 ├── repository/                     # Spring Data JPA repositories
 ├── storage/
 │   ├── ImageStorage.java           # Interface lưu ảnh
@@ -224,11 +260,14 @@ src/main/java/com/memories/
 ├── security/
 │   ├── AuthCookies.java            # Tạo, đọc, xoá cookie access/refresh (HttpOnly)
 │   ├── JwtService.java             # Tạo và kiểm tra JWT
+│   ├── Tokens.java                 # Tạo token ngẫu nhiên, băm SHA-256
 │   └── JwtAuthFilter.java          # Đọc cookie → xác thực, chặn token đã logout
 └── service/
     ├── AuthService.java            # Đăng ký, đăng nhập, refresh, logout, dọn token hết hạn
     ├── RefreshTokenService.java    # Cấp, xoay vòng, thu hồi refresh token
     ├── SocialTokenVerifier.java    # Xác minh token Google / Facebook
+    ├── PasswordResetService.java   # Quên mật khẩu: tạo token, gửi link, đổi mật khẩu
+    ├── MailService.java            # Gửi email qua Brevo API / SMTP / ghi log
     └── MemoryService.java          # Lưu file, CRUD, kiểm tra quyền sở hữu, tạo/dọn phân loại
 ```
 
@@ -241,7 +280,9 @@ src/main/java/com/memories/
 | Route | Truy cập | Nội dung |
 |---|---|---|
 | `/login` | Chỉ khi chưa đăng nhập | Form đăng nhập |
-| `/register` | Chỉ khi chưa đăng nhập | Form đăng ký |
+| `/register` | Chỉ khi chưa đăng nhập | Form đăng ký (có ô email) |
+| `/forgot-password` | Chỉ khi chưa đăng nhập | Nhập email để nhận link đặt lại mật khẩu |
+| `/reset-password?token=...` | Ai cũng vào được (mở từ email) | Nhập mật khẩu mới 2 lần |
 | `/` | Phải đăng nhập | Album kỉ niệm |
 | `*` | – | Chuyển hướng về `/` |
 
@@ -249,6 +290,8 @@ src/main/java/com/memories/
 - Bên trái: logo và 3 tấm polaroid minh hoạ. Bên phải: thẻ form có nền kính mờ.
 - Báo lỗi từ server ngay trên form, nút có hiệu ứng loading 3 chấm.
 - Có link chuyển qua lại giữa Đăng nhập và Đăng ký.
+- Ô đăng nhập nhận **tên đăng nhập hoặc email**. Dưới ô mật khẩu có link **Quên mật khẩu?**.
+- Cùng component còn có chế độ `forgot` (gửi link, báo "nếu email đã đăng ký thì link đã được gửi") và `reset` (đọc `token` trên URL, kiểm tra link còn hiệu lực trước khi hiện form, kiểm tra 2 ô mật khẩu khớp nhau). Đổi mật khẩu thành công thì xoá phiên đang có ở trình duyệt, chuyển sang `/login` (thay thế lịch sử nên bấm Back không quay lại link cũ) và hiện thông báo "Đổi mật khẩu thành công".
 - Có nút **Tiếp tục với Google** và **Tiếp tục với Facebook** (`components/SocialLogin.jsx`), chỉ hiện khi BE đã cấu hình key. SDK của Google và Facebook chỉ được tải khi cần và chỉ tải một lần.
 
 **Trang Album (`pages/GalleryPage.jsx`)**
@@ -263,7 +306,7 @@ src/main/java/com/memories/
 **Thêm ảnh (`components/UploadModal.jsx`)**
 - Kéo thả hoặc bấm để chọn ảnh, xem trước trước khi lưu.
 - Kiểm tra định dạng và dung lượng (15MB) ngay ở client.
-- **Nén ảnh trước khi upload** (`compressImage.js`): thu nhỏ cạnh dài về tối đa 1920px, chuyển sang WebP chất lượng 80%. Trình duyệt không encode được WebP thì dùng JPEG. GIF giữ nguyên để không mất chuyển động. Nếu bản nén lớn hơn bản gốc thì gửi bản gốc. Góc ảnh hiện dung lượng trước → sau (vd. `4.2MB → 380KB`).
+- **Nén ảnh trước khi upload** (`compressImage.js`): thu nhỏ cạnh dài về tối đa 1920px, chuyển sang WebP chất lượng 80%. Trình duyệt không encode được WebP bằng canvas (Safari) thì encode bằng WASM (`@jsquash/webp`, file `.wasm` ~300KB chỉ tải khi cần). WASM cũng lỗi thì mới dùng JPEG. GIF giữ nguyên để không mất chuyển động. Nếu bản nén lớn hơn bản gốc thì gửi bản gốc. Góc ảnh hiện dung lượng trước → sau (vd. `4.2MB → 380KB`).
 - Tự điền tiêu đề từ tên file. Chọn được ngày (không quá hôm nay) và thêm ghi chú.
 - **Chọn phân loại** (`components/CategoryPicker.jsx`): các phân loại đã có hiện thành chip để bấm chọn (bấm lần nữa để bỏ chọn). Nút **+ Tạo mục mới** mở ô nhập tên (Enter để thêm, Esc để huỷ). Gõ trùng tên mục có sẵn thì chọn luôn mục đó. Đang lọc theo một phân loại mà bấm *Thêm ảnh* thì phân loại đó được chọn sẵn.
 
@@ -362,9 +405,18 @@ D:\My-Project-FE
 9. **Animation bầu trời sao**: thêm canvas sao lấp lánh, parallax theo chuột, sao băng, và chùm sao khi bấm chuột.
 10. **Theme sáng / tối**: chuyển màu sang biến CSS, thêm nút đổi theme có hiệu ứng vòng tròn lan ra, lưu lựa chọn trong `localStorage`.
 11. **Chuẩn bị deploy**: tách phần lưu ảnh thành `ImageStorage` (local / db / Cloudflare R2), khi deploy lưu ảnh trong Neon (bảng `memory_images`) để không tốn phí, thêm `Dockerfile` + `render.yaml` cho Render, Pages Function proxy `/api/*` cho Cloudflare Pages, `public/_headers` (cache asset, header bảo mật), viết `DEPLOY.md`.
+12. **Quên mật khẩu + đăng ký bằng email**: thêm cột `users.email`, bảng `password_reset_tokens`, endpoint `forgot-password` / `reset-password`, gửi mail qua Brevo hoặc SMTP. Đăng nhập được bằng username hoặc email.
 
 ## 5. Deploy
-Hướng dẫn từng bước nằm trong **`DEPLOY.md`** (có ở cả 2 repo). Tóm tắt:
+Hướng dẫn từng bước nằm trong **`DEPLOY.md`** (có ở cả 2 repo). Đang chạy tại:
+
+| | URL |
+|---|---|
+| Web (Cloudflare Pages) | https://memories-web-8q7.pages.dev |
+| API (Render) | https://memories-api-7rc3.onrender.com |
+| Code | https://github.com/Baoloc131201/memories-web, https://github.com/Baoloc131201/memories-api |
+
+Tóm tắt:
 - **FE → Cloudflare Pages.** Build `npm run build`, output `dist`. Pages Function `functions/api/[[path]].js` chuyển `/api/*` sang BE (biến `BACKEND_URL`), nên trình duyệt chỉ thấy một domain và cookie `SameSite=Strict` vẫn chạy.
 - **BE → Render** bằng Docker (`Dockerfile`, `render.yaml`). Biến môi trường: `COOKIE_SECURE=true`, `STORAGE_TYPE=db`, `CORS_ORIGINS=https://<project>.pages.dev,...`, `JWT_SECRET` ngẫu nhiên.
 - **DB và ảnh → Neon** (`STORAGE_TYPE=db`). Ảnh cũ trong `./uploads` được chuyển vào DB bằng `MIGRATE_LOCAL_UPLOADS=true` (chạy 1 lần ở máy). Neon free 0,5GB, chứa khoảng 1.500–2.500 ảnh đã nén.
@@ -373,3 +425,4 @@ Hướng dẫn từng bước nằm trong **`DEPLOY.md`** (có ở cả 2 repo).
   - Thêm domain Pages vào Google và Facebook.
   - Chuyển app Facebook sang *Live*.
   - Xoá các user test.
+  - Cấu hình gửi mail trên Render: `APP_URL`, `BREVO_API_KEY`, `MAIL_FROM` (xem 1.2).
