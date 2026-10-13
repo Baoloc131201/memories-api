@@ -139,7 +139,7 @@ Lỗi luôn có dạng `{ "status": <số>, "message": "<mô tả>" }`.
 |---|---|---|---|---|
 | POST | `/api/auth/register` | Không | JSON `{ username, email, displayName, password }` | `201` + `Set-Cookie` + `{ id, username, displayName }` |
 | POST | `/api/auth/login` | Không | JSON `{ username, password }`, `username` là tên đăng nhập **hoặc email** | `200` + `Set-Cookie` + `{ id, username, displayName }` |
-| POST | `/api/auth/forgot-password` | Không | JSON `{ email }` | `204` (luôn trả 204 dù email có tài khoản hay không) |
+| POST | `/api/auth/forgot-password` | Không | JSON `{ email }` | `204`. Email chưa đăng ký thì `404`, gửi lại trong 60 giây thì `429` |
 | POST | `/api/auth/reset-password/validate` | Không | JSON `{ token }` | `204` nếu link còn dùng được, `400` nếu đã dùng hoặc hết hạn |
 | POST | `/api/auth/reset-password` | Không | JSON `{ token, password }` | `204`. Token sai, đã dùng hoặc hết hạn thì `400` |
 | POST | `/api/auth/google` | Không | JSON `{ credential }` (Google ID token) | `200` + `Set-Cookie` + `{ id, username, displayName }`. Token sai thì `401`, chưa cấu hình thì `404` |
@@ -158,9 +158,9 @@ Ràng buộc khi đăng ký:
 Đăng nhập: chuỗi có `@` thì tìm theo email, không thì tìm theo username. Sai thì trả `401` với message `"Sai tên đăng nhập/email hoặc mật khẩu"`.
 
 #### Quên mật khẩu
-1. FE gửi `POST /api/auth/forgot-password { email }`. Nếu email có tài khoản, BE tạo token ngẫu nhiên 32 byte (DB chỉ lưu SHA-256, bảng `password_reset_tokens`), sống **30 phút**, rồi gửi email chứa link `APP_URL/reset-password?token=...`. Link lấy từ cấu hình `APP_URL`, không lấy từ header request.
-2. Không báo email có tồn tại hay không, và gửi mail bất đồng bộ (`@Async`) để thời gian phản hồi như nhau.
-3. Mỗi user chỉ được gửi 1 email / 60 giây. Gửi link mới thì link cũ mất hiệu lực.
+1. FE gửi `POST /api/auth/forgot-password { email }`. Email chưa đăng ký thì trả `404` ("Email này không tồn tại, bạn vui lòng nhập email lại nhé"). Có tài khoản thì BE tạo token ngẫu nhiên 32 byte (DB chỉ lưu SHA-256, bảng `password_reset_tokens`), sống **30 phút**, rồi gửi email chứa link `APP_URL/reset-password?token=...`. Link lấy từ cấu hình `APP_URL`, không lấy từ header request.
+2. Mail được gửi bất đồng bộ (`@Async`) nên API trả về ngay. Lưu ý: vì báo rõ email không tồn tại nên người khác dò được email nào đã đăng ký (chủ dự án chọn như vậy cho dễ dùng).
+3. Mỗi user chỉ được gửi 1 email / 60 giây (gửi sớm hơn thì `429`). Gửi link mới thì link cũ mất hiệu lực.
 4. Mở link thì FE gọi `reset-password/validate`, link đã dùng hoặc hết hạn thì báo ngay, không hiện form.
 5. `POST /api/auth/reset-password { token, password }`: đổi mật khẩu, xoá token (link hết hiệu lực), **thu hồi mọi refresh token** của user (đăng xuất mọi thiết bị; access token đang có vẫn sống tối đa 15 phút).
 6. Tài khoản Google/Facebook mới tạo được lưu email (nếu email chưa thuộc user khác) nên cũng dùng được quên mật khẩu để đặt mật khẩu và đăng nhập bằng email. Tài khoản cũ chưa có email thì chưa dùng được tính năng này.
@@ -291,7 +291,7 @@ src/main/java/com/memories/
 - Báo lỗi từ server ngay trên form, nút có hiệu ứng loading 3 chấm.
 - Có link chuyển qua lại giữa Đăng nhập và Đăng ký.
 - Ô đăng nhập nhận **tên đăng nhập hoặc email**. Dưới ô mật khẩu có link **Quên mật khẩu?**.
-- Cùng component còn có chế độ `forgot` (gửi link, báo "nếu email đã đăng ký thì link đã được gửi") và `reset` (đọc `token` trên URL, kiểm tra link còn hiệu lực trước khi hiện form, kiểm tra 2 ô mật khẩu khớp nhau). Đổi mật khẩu thành công thì xoá phiên đang có ở trình duyệt, chuyển sang `/login` (thay thế lịch sử nên bấm Back không quay lại link cũ) và hiện thông báo "Đổi mật khẩu thành công".
+- Cùng component còn có chế độ `forgot` (gửi link; email chưa đăng ký thì báo lỗi ngay trên form) và `reset` (đọc `token` trên URL, kiểm tra link còn hiệu lực trước khi hiện form, kiểm tra 2 ô mật khẩu khớp nhau). Đổi mật khẩu thành công thì xoá phiên đang có ở trình duyệt, chuyển sang `/login` (thay thế lịch sử nên bấm Back không quay lại link cũ) và hiện thông báo "Đổi mật khẩu thành công".
 - Có nút **Tiếp tục với Google** và **Tiếp tục với Facebook** (`components/SocialLogin.jsx`), chỉ hiện khi BE đã cấu hình key. SDK của Google và Facebook chỉ được tải khi cần và chỉ tải một lần.
 
 **Trang Album (`pages/GalleryPage.jsx`)**

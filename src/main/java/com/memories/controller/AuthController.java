@@ -56,7 +56,7 @@ public class AuthController {
         return withCookies(authService.socialLogin(socialVerifier.verifyFacebook(req.accessToken())), response);
     }
 
-    /** Gửi link đặt lại mật khẩu. Luôn trả 204 dù email có tài khoản hay không. */
+    /** Gửi link đặt lại mật khẩu. Email chưa đăng ký thì 404, gửi lại trong 60 giây thì 429. */
     @PostMapping("/forgot-password")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {

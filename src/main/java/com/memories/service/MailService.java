@@ -25,7 +25,7 @@ import java.util.Map;
  * - BREVO_API_KEY: gọi HTTP API của Brevo (dùng khi deploy, vì Render free chặn cổng SMTP).
  * - MAIL_HOST: gửi qua SMTP (vd. Gmail + App Password), tiện khi chạy ở máy.
  * - Không cấu hình gì: chỉ ghi nội dung ra log để test.
- * Gửi bất đồng bộ để API trả về ngay và không lộ (qua thời gian phản hồi) email có tồn tại hay không.
+ * Gửi bất đồng bộ để API trả về ngay, không phải chờ Brevo/SMTP.
  */
 @Service
 public class MailService {

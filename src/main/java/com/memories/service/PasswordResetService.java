@@ -45,24 +45,24 @@ public class PasswordResetService {
         this.frontendUrl = frontendUrl.replaceAll("/+$", "");
     }
 
-    /**
-     * Gửi link đặt lại mật khẩu nếu email có tài khoản. Không báo email có tồn tại hay không,
-     * để người khác không dò được ai đã đăng ký.
-     */
+    /** Gửi link đặt lại mật khẩu. Email chưa đăng ký thì báo 404, gửi lại quá sớm thì báo 429. */
     @Transactional
     public void requestReset(String email) {
         Instant now = Instant.now();
-        users.findByEmail(email.trim().toLowerCase(Locale.ROOT))
-                .filter(user -> !tokens.existsByUserAndCreatedAtAfter(user, now.minus(RESEND_COOLDOWN)))
-                .ifPresent(user -> {
-                    // Chỉ link mới nhất còn dùng được
-                    tokens.deleteByUser(user);
-                    String raw = Tokens.random();
-                    tokens.save(new PasswordResetToken(Tokens.sha256(raw), user, now.plus(TTL)));
-                    String link = UriComponentsBuilder.fromHttpUrl(frontendUrl).path("/reset-password")
-                            .queryParam("token", raw).toUriString();
-                    mail.sendPasswordReset(user.getEmail(), user.getDisplayName(), link, (int) TTL.toMinutes());
-                });
+        User user = users.findByEmail(email.trim().toLowerCase(Locale.ROOT))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Email này không tồn tại, bạn vui lòng nhập email lại nhé"));
+        if (tokens.existsByUserAndCreatedAtAfter(user, now.minus(RESEND_COOLDOWN))) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "Link vừa được gửi, bạn vui lòng kiểm tra hộp thư hoặc đợi " + RESEND_COOLDOWN.toSeconds() + " giây rồi thử lại nhé");
+        }
+        // Chỉ link mới nhất còn dùng được
+        tokens.deleteByUser(user);
+        String raw = Tokens.random();
+        tokens.save(new PasswordResetToken(Tokens.sha256(raw), user, now.plus(TTL)));
+        String link = UriComponentsBuilder.fromHttpUrl(frontendUrl).path("/reset-password")
+                .queryParam("token", raw).toUriString();
+        mail.sendPasswordReset(user.getEmail(), user.getDisplayName(), link, (int) TTL.toMinutes());
     }
 
     /** Kiểm tra link còn dùng được không (FE gọi khi mở trang đặt lại mật khẩu). */
